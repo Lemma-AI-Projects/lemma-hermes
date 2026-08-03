@@ -3842,6 +3842,28 @@ class AIAgent:
                 self._memory_manager.shutdown_all()
             except Exception:
                 pass
+        # W2.4: session-boundary learner rollup — stamp last_exposed and log
+        # partial episodes for concepts touched this session. Deliberately does
+        # NOT move mastery (no test signal at session end). No-op when learner
+        # is disabled; never raises.
+        if getattr(self, "_learner", None):
+            try:
+                _uid = getattr(self, "_user_id", None) or getattr(self._learner, "user_id", "default")
+                _parts = []
+                for m in (messages or []):
+                    if isinstance(m, dict) and m.get("role") == "user":
+                        _c = m.get("content")
+                        if isinstance(_c, str):
+                            _parts.append(_c)
+                        elif isinstance(_c, list):
+                            for _seg in _c:
+                                if isinstance(_seg, dict) and isinstance(_seg.get("text"), str):
+                                    _parts.append(_seg["text"])
+                _concepts = self._learner.concepts_in_text(_uid, " ".join(_parts))
+                if _concepts:
+                    self._learner.summarize_session(_uid, self.session_id or "", _concepts)
+            except Exception:
+                pass
         # Notify context engine of session end (flush DAG, close DBs, etc.)
         if hasattr(self, "context_compressor") and self.context_compressor:
             try:

@@ -36,6 +36,7 @@ LEARNER_STATE_SCHEMA: Dict[str, Any] = {
                     "record_episode",
                     "query_knowledge",
                     "add_rule",
+                    "due_reviews",
                 ],
                 "description": "Which learner-state operation to run.",
             },

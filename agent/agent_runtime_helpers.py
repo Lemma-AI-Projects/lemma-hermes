@@ -2815,6 +2815,18 @@ def invoke_tool(agent, function_name: str, function_args: dict, effective_task_i
             )
         except Exception:
             pass
+        # W2.1: deterministic learner hint (best-matching high-confidence
+        # learning pattern) prefixed to the tool result. No-op when learner
+        # is disabled or nothing matches; never raises.
+        _learner_hint = ""
+        if getattr(agent, "_learner", None):
+            try:
+                from agent.learner.learner_router import hint_for_tool as _hint_for_tool
+                _learner_hint = _hint_for_tool(agent, function_name, function_args)
+            except Exception:
+                _learner_hint = ""
+        if _learner_hint:
+            result = _learner_hint + "\n\n" + result
         return result
 
     if function_name == "todo":

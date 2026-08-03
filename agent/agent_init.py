@@ -1691,6 +1691,17 @@ def init_agent(
                 build_cognitive_review_prompt as _build_review_prompt,
             )
             agent._COMBINED_REVIEW_PROMPT = _build_review_prompt()
+            # W2.2: optional daily learner-review cron job (off by default —
+            # learner.cron_review_enabled). Sync is idempotent and fully
+            # contained in maybe_sync_review_job; failures are swallowed.
+            if _learner_cfg.get("cron_review_enabled", False):
+                from agent.learner.learner_scheduler import (
+                    maybe_sync_review_job as _sync_review_job,
+                )
+                _sync_review_job(
+                    True,
+                    schedule=str(_learner_cfg.get("cron_review_schedule", "daily")),
+                )
     except Exception:
         agent._learner = None  # Learner is optional -- don't break agent init
 

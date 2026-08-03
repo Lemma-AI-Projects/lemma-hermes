@@ -492,6 +492,44 @@ class LearnerCore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def due_summary(self, user_id: str, limit: int = 5) -> str:
+        """Human-readable one-liner of concepts due for review (W2.2)."""
+        due = self.get_due_reviews(user_id, limit=limit)
+        if not due:
+            return ""
+        return "Concepts due for review: " + ", ".join(
+            f"{d['concept']} (mastery {d['mastery']:.0%})" for d in due
+        )
+
+    def summarize_session(
+        self, user_id: str, session_id: str, touched_concepts: List[str]
+    ) -> int:
+        """Session-boundary rollup (W2.4): one episode per concept touched in
+        the session, WITHOUT fabricating test results.
+
+        Deliberately bypasses record_episode's feedback loop: a session that
+        merely touched a concept is 'partial' with no success signal, so
+        mastery/confidence must NOT move. We only stamp last_exposed and log
+        the episode for traceability. Returns the number of episodes written.
+        """
+        now = _now()
+        written = 0
+        with self._connect() as conn:
+            for concept in dict.fromkeys(c.strip() for c in touched_concepts if c and c.strip()):
+                node_id = self._resolve_concept(conn, user_id, concept, "general")
+                conn.execute(
+                    "UPDATE knowledge_nodes SET last_exposed=? WHERE node_id=?",
+                    (now, node_id),
+                )
+                conn.execute(
+                    "INSERT INTO learning_episodes(user_id, session_id, goal, concept, plugin, "
+                    "method, result, reason, new_strategy, messages_ref, created_at) "
+                    "VALUES(?,?,?,?,'','','partial','session_end','','',?)",
+                    (user_id, session_id, f"session {session_id} rollup", concept, now),
+                )
+                written += 1
+        return written
+
     def enqueue_review(
         self,
         user_id: str,
@@ -536,6 +574,29 @@ class LearnerCore:
     # -- injection helpers (W0.6 / W0.7) --------------------------------------
 
     _SPLIT_RE = re.compile(r"[\s,;.:!?()\[\]{}<>/\\\-_]+")
+
+    def concepts_in_text(self, user_id: str, text: str, limit: int = 20) -> List[str]:
+        """Return known concepts (attempts>0) whose name appears in ``text``.
+
+        Used by the session-boundary rollup to find which concepts a session
+        actually touched. Pure lexical matching, consistent with prefetch.
+        """
+        if not text:
+            return []
+        tokens = {t.lower() for t in self._SPLIT_RE.split(text) if len(t) >= 2}
+        hits: List[str] = []
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT concept FROM knowledge_nodes WHERE user_id=? AND attempts > 0",
+                (user_id,),
+            ).fetchall()
+            for r in rows:
+                c = (r["concept"] or "").lower()
+                if c in tokens or any(t in c or c in t for t in tokens):
+                    hits.append(r["concept"])
+                if len(hits) >= limit:
+                    break
+        return hits
 
     def build_static_block(self, user_id: Optional[str] = None) -> str:
         """Static system-prompt tier: L1 identity + L5 active rules + L3 top patterns.
@@ -671,6 +732,15 @@ class LearnerCore:
                     return {"success": False, "error": "rule required"}
                 r = self.add_rule(user_id, rule, source=str(kw.get("source") or "manual"))
                 return {"success": True, "rule": r}
+            if action == "due_reviews":
+                _limit_raw = kw.get("limit", 5)
+                limit = int(_limit_raw) if _limit_raw is not None else 5
+                due = self.get_due_reviews(user_id, limit=limit)
+                return {
+                    "success": True,
+                    "due": due,
+                    "summary": self.due_summary(user_id, limit=limit),
+                }
             return {"success": False, "error": f"unknown action: {action}"}
         except Exception as e:  # pragma: no cover - defensive
             return {"success": False, "error": str(e)}
