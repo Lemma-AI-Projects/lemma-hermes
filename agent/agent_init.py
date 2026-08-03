@@ -1658,7 +1658,41 @@ def init_agent(
                 agent._memory_store.load_from_disk()
         except Exception:
             pass  # Memory is optional -- don't break agent init
-    
+
+
+    # Learner state — five-layer learning system (first-class core module).
+    # Separate from built-in memory: learner.db holds identity / knowledge /
+    # patterns / episodes / meta-rules + the spaced-repetition review queue.
+    # Enabled by default (D5). ``agent._learner = None`` keeps every downstream
+    # call site a safe no-op, so a learner init failure must never break agent
+    # startup. Scope: gateway uses user_id; CLI uses the active profile name
+    # (D10).
+    agent._learner = None
+    try:
+        _learner_cfg = _agent_cfg.get("learner", {}) if _agent_cfg else {}
+        # skip_memory=True (flush/background/subagent forks) keeps the learner
+        # uninitialized; the background-review fork re-binds the parent's
+        # learner explicitly (see background_review.py) so it can still write
+        # episodes during cognitive-change review.
+        if not skip_memory and _learner_cfg.get("enabled", True):
+            from agent.learner import LearnerCore as _LearnerCore
+            agent._learner = _LearnerCore(str(get_hermes_home() / "learner.db"))
+            if getattr(agent, "_user_id", None):
+                agent._learner.user_id = agent._user_id
+            else:
+                try:
+                    from hermes_cli.profiles import get_active_profile_name as _gpn
+                    agent._learner.user_id = _gpn() or "default"
+                except Exception:
+                    agent._learner.user_id = "default"
+            # W1.1: swap the background self-review prompt for the
+            # cognitive-change analysis (read at fork time from this attribute).
+            from agent.learner.learner_assess import (
+                build_cognitive_review_prompt as _build_review_prompt,
+            )
+            agent._COMBINED_REVIEW_PROMPT = _build_review_prompt()
+    except Exception:
+        agent._learner = None  # Learner is optional -- don't break agent init
 
 
     # Memory provider plugin (external — one at a time, alongside built-in)
@@ -1731,6 +1765,15 @@ def init_agent(
 
     from agent.memory_manager import inject_memory_provider_tools as _inject_memory_provider_tools
     _inject_memory_provider_tools(agent)
+
+    # Learner tool injection (first-class core module, not a provider — so it
+    # bypasses the one-external-provider limit and core-name protection).
+    if agent._learner:
+        try:
+            from agent.learner import inject_tools as _inject_learner_tools
+            _inject_learner_tools(agent)
+        except Exception:
+            pass  # Learner tool is optional -- never break agent init
 
     # Skills config: nudge interval for skill creation reminders
     agent._skill_nudge_interval = 10

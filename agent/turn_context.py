@@ -1160,6 +1160,20 @@ def build_turn_context(
         except Exception:
             pass
 
+    # Learner recall: knowledge nodes matching the query + due reviews.
+    # Merged into the same prefetch cache so compose_user_api_content stays
+    # the single injection point. _learner=None → no-op. Query is re-derived
+    # locally (NOT the outer _query, which is undefined when no external
+    # memory provider is active — the common case).
+    if getattr(agent, "_learner", None):
+        try:
+            _learner_query = original_user_message if isinstance(original_user_message, str) else ""
+            _learner_ctx = agent._learner.prefetch_context(_learner_query)
+            if _learner_ctx:
+                ext_prefetch_cache = (ext_prefetch_cache + "\n\n" + _learner_ctx).strip()
+        except Exception:
+            pass
+
     # ── api_content sidecar: persist what you send ──
     # The prefetch/plugin context above is injected into the API copy of this
     # turn's user message, never into the stored content — so on the next

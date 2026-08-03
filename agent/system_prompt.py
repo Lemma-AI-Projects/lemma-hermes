@@ -520,6 +520,16 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         except Exception:
             pass
 
+    # Learner state static block (identity + active rules + top patterns).
+    # First-class core module; _learner=None means disabled → no-op.
+    if getattr(agent, "_learner", None):
+        try:
+            _learner_block = agent._learner.build_static_block()
+            if _learner_block:
+                volatile_parts.append(_learner_block)
+        except Exception:
+            pass
+
     from hermes_time import now as _hermes_now
     now = _hermes_now()
     # Date-only (not minute-precision) so the system prompt is byte-stable

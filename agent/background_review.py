@@ -764,6 +764,12 @@ def _run_review_in_thread(
             )
             review_agent._memory_write_origin = "background_review"
             review_agent._memory_write_context = "background_review"
+            # W1.1: the review fork shares the parent's learner state so it can
+            # write episodes/mastery during the cognitive-change review. The
+            # parent's _learner is None when learner is disabled — no-op
+            # everywhere downstream. Sharing the instance (rather than
+            # re-initializing) inherits the parent's user_id scope for free.
+            review_agent._learner = getattr(agent, "_learner", None)
             # The review fork pins the parent's cached system prompt and keeps
             # ``tools[]`` byte-identical to the parent so its outbound request
             # hits the same provider cache prefix (see the toolset-parity note
@@ -862,11 +868,16 @@ def _run_review_in_thread(
                     quiet_mode=True,
                 )
             }
+            # W1.1: learner_state is injected directly onto agent.tools (not a
+            # toolset), so it never appears in get_tool_definitions above —
+            # allow it explicitly when the parent has learner enabled.
+            if getattr(review_agent, "_learner", None) is not None:
+                review_whitelist.add("learner_state")
             set_thread_tool_whitelist(
                 review_whitelist,
                 deny_msg_fmt=(
                     "Background review denied non-whitelisted tool: "
-                    "{tool_name}. Only memory/skill tools are allowed."
+                    "{tool_name}. Only memory/skill/learner tools are allowed."
                 ),
             )
             try:
@@ -887,8 +898,8 @@ def _run_review_in_thread(
                 review_agent.run_conversation(
                     user_message=(
                         prompt
-                        + "\n\nYou can only call memory and skill "
-                        "management tools. Other tools will be denied "
+                        + "\n\nYou can only call memory, skill, and "
+                        "learner_state tools. Other tools will be denied "
                         "at runtime — do not attempt them."
                     ),
                     conversation_history=_review_history,
